@@ -1,0 +1,347 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include<math.h>
+#include "fichiers.h"
+#include "matrix.h" 
+#include "pred.h" 
+#include "dct.h"
+#include <opencv2/opencv.hpp>
+#define MAX_STEPS 20
+
+using cv::Vec3b;
+
+double calc_l2_error(unsigned char **original, unsigned char **reconstructed, int H, int W) {
+    double l2 = 0.0;
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++) {
+            double diff = (double)original[i][j] - (double)reconstructed[i][j];
+            l2 += diff * diff;
+        }
+    }
+    return sqrt(l2);
+}
+
+void merge_rgb_channels_and_save(unsigned char **R, unsigned char **G, unsigned char **B,
+                                 int H, int W, const char *filename_base, double entropy) {
+
+    char filename_ppm[200];
+    sprintf(filename_ppm, "%s.ppm", filename_base);
+
+    FILE *f = fopen(filename_ppm, "wb");
+    if (!f) {
+        perror("Cannot open file");
+        return;
+    }
+
+    // 写ppm头，P6表示二进制RGB
+    fprintf(f, "P6\n%d %d\n255\n", W, H);
+
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++) {
+            unsigned char pixel[3];
+            pixel[0] = R[i][j]; // R
+            pixel[1] = G[i][j]; // G
+            pixel[2] = B[i][j]; // B
+            fwrite(pixel, 1, 3, f);
+        }
+    }
+
+    fclose(f);
+
+    char cmd[500];
+    sprintf(cmd, "convert %s.ppm -gravity South -pointsize 20 -fill white "
+                 "-annotate +0+5 'Entropy = %.3f' %s.png",
+                 filename_base, entropy, filename_base);
+    system(cmd); 
+}
+
+
+
+//sans boucle de retroaction
+void my_codeurDPCM_sans_boucle_de_retroaction(unsigned char **x, int **err, int H, int W, int step)
+{
+	for(int i = 0; i < H; i++){
+		for(int j = 0; j < W; j++){
+			int pred;
+			
+			if(j == 0){
+				pred = 0;
+			}
+			else{
+				pred = x[i][j-1];
+			}
+			
+			int e = x[i][j] - pred; 
+			err[i][j] = quantiz(e,step);
+		}
+	} 
+}
+void my_codeurDPCM_avec_boucle_de_retroaction(unsigned char **x, int **err, int H, int W, int step)
+{
+	
+	for(int i = 0; i < H; i++){
+		for(int j = 0; j < W; j++){
+			
+			int pred;
+			if(j == 0){
+				pred = 0;
+			}
+			else{
+				pred = x[i][j-1];
+			} 
+			
+			int e = x[i][j] - pred;
+			
+			err[i][j] = quantiz(e,step);
+			
+			//boucle de retroaction
+			int val = pred + err[i][j];
+			if(val < 0)val = 0;
+			if(val > 255)val = 255;
+			x[i][j] = (unsigned char)val;//rewrite 
+		}
+		
+	}
+	
+}
+
+void my_decodeurDPCM(int **err, unsigned char **xrec, int H, int W)
+{
+	for(int i = 0; i < H; i++){
+		for(int j = 0; j < W; j++){
+			int pred;
+			
+			if(j==0){
+				pred = 0;
+			}
+			else{
+				pred = xrec[i][j-1];
+			}
+			
+			int val = pred + err[i][j];
+			if(val < 0)val = 0;
+			if(val > 255)val = 255;
+			
+			xrec[i][j] = (unsigned char)val;
+		}
+		
+	}
+}
+
+//codeur adapt
+void my_codeur_adapt(unsigned char **x, int **err, int H, int W, int step)
+{
+	for(int i = 0; i < H; i++){
+		for(int j = 0; j < W; j++){
+			int pred;
+			
+			if(i == 0||j == 0){
+				pred = 0;
+			}else{
+				int A = x[i][j-1];
+				int B = x[i-1][j-1];
+				int C = x[i-1][j];
+				
+				if(abs(B-C) <= abs(B-A)){pred = A;}
+				else{pred = C;}
+				
+			}
+			int e = x[i][j]-pred;
+			err[i][j] = quantiz(e, step);
+			
+		}
+	}
+	
+}
+
+void my_decodeur_adapt(int **err, unsigned char **xrec, int H, int W)
+{
+	for(int i = 0; i < H; i++){
+		for(int j = 0; j < W; j++){
+			int pred;
+				
+			if(i==0|j==0){
+				pred = 0;
+			}
+			else{
+				int A = xrec[i][j-1];
+				int B = xrec[i-1][j-1];
+				int C = xrec[i-1][j];
+				
+				if(abs(B-C) <= abs(B-A)){pred = A;}
+				else{pred = C;}
+			}
+				
+			int val = pred + err[i][j];
+			if(val < 0)val = 0;
+			if(val > 255)val = 255;
+				
+			xrec[i][j] = (unsigned char)val;
+		}
+			
+	}
+}
+
+
+int main (int argc, char *argv[])
+{ 
+    double l2_errors_sans[MAX_STEPS];
+    double l2_errors_avec[MAX_STEPS];
+    double l2_errors_adapt[MAX_STEPS]; 
+    
+    double entropy_sans_list[MAX_STEPS] = {0};
+    double entropy_avec_list[MAX_STEPS] = {0};
+    double entropy_adapt_list[MAX_STEPS] = {0};
+
+    char nom[200];
+
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s image.jpg\n", argv[0]);
+        return 1;
+    }
+
+// 使用 OpenCV 读取 RGB 图像
+    cv::Mat image = imread(argv[1], cv::IMREAD_COLOR);
+    if (image.empty()) {
+        fprintf(stderr, "无法打开图像文件: %s\n", argv[1]);
+        return -1;
+    }
+
+    int H = image.rows;
+    int W = image.cols;
+    fprintf(stderr, "Loaded image: %s (%dx%d)\n", argv[1], W, H);
+
+   
+    unsigned char **R = alocamuc(H, W);
+    unsigned char **G = alocamuc(H, W);
+    unsigned char **B = alocamuc(H, W);
+
+ 
+    for (int i = 0; i < H; i++) {
+        for (int j = 0; j < W; j++) {
+            Vec3b pixel = image.at<Vec3b>(i, j);
+            B[i][j] = pixel[0]; // Blue
+            G[i][j] = pixel[1]; // Green
+            R[i][j] = pixel[2]; // Red
+        }
+    }
+
+    unsigned char **channels[3] = {R, G, B};
+ int step_count = 0;
+    for (int step = 1; step <= 20; step += 2) {
+        fprintf(stderr, "\n=== STEP = %d ===\n", step);
+
+        double total_entropy_sans = 0.0;
+        double total_entropy_avec = 0.0;
+        double total_entropy_adapt = 0.0;
+        
+
+        unsigned char **R_rec_sans = alocamuc(H, W);
+        unsigned char **G_rec_sans = alocamuc(H, W);
+        unsigned char **B_rec_sans = alocamuc(H, W);
+
+        unsigned char **R_rec_avec = alocamuc(H, W);
+        unsigned char **G_rec_avec = alocamuc(H, W);
+        unsigned char **B_rec_avec = alocamuc(H, W);
+
+        unsigned char **R_rec_adapt = alocamuc(H, W);
+        unsigned char **G_rec_adapt = alocamuc(H, W);
+        unsigned char **B_rec_adapt = alocamuc(H, W);
+
+        unsigned char ***rec_sans_list = new unsigned char**[3]{R_rec_sans, G_rec_sans, B_rec_sans};
+        unsigned char ***rec_avec_list = new unsigned char**[3]{R_rec_avec, G_rec_avec, B_rec_avec};
+        unsigned char ***rec_adapt_list = new unsigned char**[3]{R_rec_adapt, G_rec_adapt, B_rec_adapt};
+
+        for (int ch = 0; ch < 3; ch++) {
+            unsigned char **x_copy = alocamuc(H, W);
+            int **err = alocami(H, W);
+
+
+            for (int i = 0; i < H; i++)
+                for (int j = 0; j < W; j++)
+                    x_copy[i][j] = channels[ch][i][j];
+
+            my_codeurDPCM_sans_boucle_de_retroaction(x_copy, err, H, W, step);
+            total_entropy_sans += calc_entropie(err, H, W);
+            my_decodeurDPCM(err, rec_sans_list[ch], H, W);
+
+
+            for (int i = 0; i < H; i++)
+                for (int j = 0; j < W; j++)
+                    x_copy[i][j] = channels[ch][i][j];
+
+            my_codeurDPCM_avec_boucle_de_retroaction(x_copy, err, H, W, step);
+            total_entropy_avec += calc_entropie(err, H, W);
+            my_decodeurDPCM(err, rec_avec_list[ch], H, W);
+
+
+            for (int i = 0; i < H; i++)
+                for (int j = 0; j < W; j++)
+                    x_copy[i][j] = channels[ch][i][j];
+
+            my_codeur_adapt(x_copy, err, H, W, step);
+            total_entropy_adapt += calc_entropie(err, H, W);
+            my_decodeur_adapt(err, rec_adapt_list[ch], H, W);
+
+            dalocuc(x_copy, H);
+            daloci(err, H);
+            
+
+        }
+
+        char nom_rgb[100];
+        sprintf(nom_rgb, "rec_sans_rgb_step_%d.jpg", step);
+        merge_rgb_channels_and_save(R_rec_sans, G_rec_sans, B_rec_sans, H, W, nom_rgb,total_entropy_sans / 3);
+        fprintf(stderr, "Entropie RGB pred_sans = %g\n", total_entropy_sans / 3);
+
+        sprintf(nom_rgb, "rec_avec_rgb_step_%d.jpg", step);
+        merge_rgb_channels_and_save(R_rec_avec, G_rec_avec, B_rec_avec, H, W, nom_rgb,total_entropy_avec / 3);
+        fprintf(stderr, "Entropie RGB pred_avec = %g\n", total_entropy_avec / 3);
+
+        sprintf(nom_rgb, "rec_adapt_rgb_step_%d.jpg", step);
+        merge_rgb_channels_and_save(R_rec_adapt, G_rec_adapt, B_rec_adapt, H, W, nom_rgb,total_entropy_adapt / 3);
+        fprintf(stderr, "Entropie RGB pred_adapt = %g\n", total_entropy_adapt / 3);
+        
+        double l2_sans = 0.0, l2_avec = 0.0, l2_adapt = 0.0;
+
+        for (int ch = 0; ch < 3; ch++) {
+            l2_sans  += calc_l2_error(channels[ch], rec_sans_list[ch], H, W);
+            l2_avec  += calc_l2_error(channels[ch], rec_avec_list[ch], H, W);
+            l2_adapt += calc_l2_error(channels[ch], rec_adapt_list[ch], H, W);
+        }
+        entropy_sans_list[step_count]  = total_entropy_sans / 3;
+      	entropy_avec_list[step_count]  = total_entropy_avec / 3;	
+	      entropy_adapt_list[step_count] = total_entropy_adapt / 3;
+        l2_errors_sans[step_count]  = l2_sans / 3;
+        l2_errors_avec[step_count]  = l2_avec / 3;
+        l2_errors_adapt[step_count] = l2_adapt / 3;
+        fprintf(stderr, "L2 error RGB pred_sans  = %g\n", l2_errors_sans[step_count]);
+        fprintf(stderr, "L2 error RGB pred_avec  = %g\n", l2_errors_avec[step_count]);
+        fprintf(stderr, "L2 error RGB pred_adapt = %g\n", l2_errors_adapt[step_count]);
+
+        step_count++;
+
+        dalocuc(R_rec_sans, H); dalocuc(G_rec_sans, H); dalocuc(B_rec_sans, H);
+        dalocuc(R_rec_avec, H); dalocuc(G_rec_avec, H); dalocuc(B_rec_avec, H);
+        dalocuc(R_rec_adapt, H); dalocuc(G_rec_adapt, H); dalocuc(B_rec_adapt, H);
+
+        delete[] rec_sans_list;
+        delete[] rec_avec_list;
+        delete[] rec_adapt_list;
+    }
+  
+	FILE *fp = fopen("l2_errors.csv", "w");
+	fprintf(fp, "Step,L2_Sans,L2_Avec,L2_Adapt,Entropy_Sans,Entropy_Avec,Entropy_Adapt\n");
+	for (int i = 0, step = 1; step <= 20; step += 2, i++) {
+    		fprintf(fp, "%d,%lf,%lf,%lf,%lf,%lf,%lf\n", step,
+            	l2_errors_sans[i], l2_errors_avec[i], l2_errors_adapt[i],
+            	entropy_sans_list[i], entropy_avec_list[i], entropy_adapt_list[i]);
+	}
+	fclose(fp);
+    
+    dalocuc(R, H);
+    dalocuc(G, H);
+    dalocuc(B, H);
+  return 1; 
+}

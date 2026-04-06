@@ -1,0 +1,38 @@
+ PERFORMANCE ANALYSIS
+=======================
+
+Entropy Analysis:
+Original image:        7.649 bits/pixel
+Global prediction:     4.939 bits/pixel
+Local prediction:      7.665 bits/pixel
+Global residual:       6.710 bits/pixel
+Local residual:        6.605 bits/pixel
+Global quantized err:  5.041 bits/pixel
+Local quantized err:   6.812 bits/pixel
+
+Quality Metrics:
+Global MSE:            3849.78
+Local MSE:             3083.54
+Global PSNR:           12.28 dB
+Local PSNR:            13.24 dB
+
+Compression Potential:
+Global method (residual):   12.3% entropy reduction
+Local method (residual):    13.7% entropy reduction
+Global method (quantized):  34.1% entropy reduction
+Local method (quantized):   10.9% entropy reduction
+
+ VISUALIZATION
+================
+
+ SAVING RESULTS
+=================
+Results saved to images/results/
+CSV files created: entropy_analysis.csv, quality_metrics.csv
+
+ SUMMARY
+==========
+Image: 640x800 pixels, Delta: 1
+Global method - PSNR: 12.28 dB, Quantized entropy reduction: 34.1%
+Local method  - PSNR: 13.24 dB, Quantized entropy reduction: 10.9%
+ Local method performs better (+0.96 dB PSNR)

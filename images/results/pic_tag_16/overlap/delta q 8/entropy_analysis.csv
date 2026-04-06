@@ -1,0 +1,8 @@
+Method,Entropy_bits_per_pixel
+Original,7.649138
+Global_Pred,4.438944
+Local_Pred,7.516278
+Global_Residual,6.721574
+Local_Residual,6.974821
+Global_Quantized,2.231776
+Local_Quantized,5.207248
