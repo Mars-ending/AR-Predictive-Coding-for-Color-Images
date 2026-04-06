@@ -1,7 +1,7 @@
-function [err_r, err_g, err_b, Rmed, Gmed, Bmed] = Predict_RGB(filename, r, g, b, delta)
+function [reconstructed, err_r, err_g, err_b, Rmed, Gmed, Bmed] = Predict_RGB(filename, r, g, b, delta)
 
 % Predicts the image and quantizes the
-% function outputs the residuals and the average of the pixels in each layer.
+% function outputs the reconstructed RGB image and the average of the pixels in each layer.
 
 img = double(imread(filename));
 R = img(:,:,1); G = img(:,:,2); B = img(:,:,3);
@@ -18,7 +18,7 @@ err_r = zeros(M,N);
 err_g = zeros(M,N);
 err_b = zeros(M,N);
 
-% initial prediction
+% initial prediction (reconstructed values)
 Rrec = zeros(M,N);
 Grec = zeros(M,N);
 Brec = zeros(M,N);
@@ -48,10 +48,16 @@ for i = 1:M
         err_g(i,j) = round((g_val - G_pred) / delta);
         err_b(i,j) = round((b_val - B_pred) / delta);
 
-        % update the rec
+        % update the rec (reconstructed values with quantization)
         Rrec(i,j) = R_pred + delta * err_r(i,j);
         Grec(i,j) = G_pred + delta * err_g(i,j);
         Brec(i,j) = B_pred + delta * err_b(i,j);
     end
 end
+
+% Convert reconstructed zero-mean values back to original range and combine into 3D
+reconstructed = zeros(M,N,3);
+reconstructed(:,:,1) = Rrec + Rmed;
+reconstructed(:,:,2) = Grec + Gmed;
+reconstructed(:,:,3) = Brec + Bmed;
 end

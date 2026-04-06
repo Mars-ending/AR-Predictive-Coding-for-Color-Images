@@ -8,8 +8,10 @@ clear; close all; clc;
 
 addpath(pwd);
 
-%load package
-pkg load image
+% Load package (Octave only, MATLAB has built-in Image Processing Toolbox)
+if exist('OCTAVE_VERSION', 'builtin') ~= 0
+    pkg load image
+end
 
 %% Configuration Parameters
 config = struct();
@@ -70,14 +72,9 @@ tic;
 fprintf('\n Performing global prediction...\n');
 
 % Perform global prediction using Predict_RGB function
-[err_r_global, err_g_global, err_b_global, Rmed_global, Gmed_global, Bmed_global] = ...
+% Returns: reconstructed (3D), err_r, err_g, err_b, Rmed, Gmed, Bmed
+[predicted_global, err_r_global, err_g_global, err_b_global, Rmed_global, Gmed_global, Bmed_global] = ...
     Predict_RGB(config.image_path, r_global, g_global, b_global, config.delta);
-
-% Reconstruct predicted image from errors and means
-predicted_global = zeros(size(original_img));
-predicted_global(:,:,1) = err_r_global * config.delta + Rmed_global;
-predicted_global(:,:,2) = err_g_global * config.delta + Gmed_global;
-predicted_global(:,:,3) = err_b_global * config.delta + Bmed_global;
 predicted_global = min(max(predicted_global, 0), 255); % Clamp values
 
 fprintf(' Global prediction completed (%.2f seconds)\n', toc);
@@ -141,7 +138,7 @@ for block_i = 1:num_blocks_h
         block_coeffs{block_i, block_j} = struct('r', r_local, 'g', g_local, 'b', b_local);
 
         % Perform local prediction for this block
-        [err_r_block, err_g_block, err_b_block, Rmed_block, Gmed_block, Bmed_block] = ...
+        [reconstructed_block, err_r_block, err_g_block, err_b_block, Rmed_block, Gmed_block, Bmed_block] = ...
             Predict_RGB(temp_filename, r_local, g_local, b_local, config.delta);
 
         % Store error results
@@ -154,10 +151,10 @@ for block_i = 1:num_blocks_h
         means_local.g(row_start:row_end, col_start:col_end) = Gmed_block;
         means_local.b(row_start:row_end, col_start:col_end) = Bmed_block;
 
-        % Reconstruct local prediction
-        predicted_local(row_start:row_end, col_start:col_end, 1) = err_r_block * config.delta + Rmed_block;
-        predicted_local(row_start:row_end, col_start:col_end, 2) = err_g_block * config.delta + Gmed_block;
-        predicted_local(row_start:row_end, col_start:col_end, 3) = err_b_block * config.delta + Bmed_block;
+        % Reconstruct local prediction using reconstructed block
+        predicted_local(row_start:row_end, col_start:col_end, 1) = reconstructed_block(:,:,1);
+        predicted_local(row_start:row_end, col_start:col_end, 2) = reconstructed_block(:,:,2);
+        predicted_local(row_start:row_end, col_start:col_end, 3) = reconstructed_block(:,:,3);
 
         % Clean up temporary file
         delete(temp_filename);

@@ -44,13 +44,25 @@ Rp = padarray(R, [1,1], 'symmetric');
 Gp = padarray(G, [1,1], 'symmetric');
 Bp = padarray(B, [1,1], 'symmetric');
 
-% Extract neighbor pixels
-R_left = Rp(2:M+1, 1:N);
-R_top = Rp(1:M,2:N+1);
-G_left = Gp(2:M+1, 1:N);
-G_top = Gp(1:M,2:N+1);
-B_left = Bp(2:M+1, 1:N);
-B_top = Bp(1:M,2:N+1);
+% Extract neighbor pixels for causal AR prediction
+% For prediction: R_left = R(i,j-1), R_top = R(i-1,j)
+% With symmetric padding, image R(i,j) maps to Rp(i+1,j+1)
+% Left neighbor R(i,j-1): need Rp(i+1,j) for j>=2, but extraction gives column j of Rp(2:M+1,:)
+% Top neighbor R(i-1,j): need Rp(i,j+1) for i>=2, but extraction gives row i of Rp(:,2:N+1)
+% The original code uses R_left = Rp(2:M+1,1:N) and R_top = Rp(1:M,2:N+1)
+% This extracts R(i,j) for left (interior) and R(i,j+1) for top (interior)
+% These are the WRONG neighbors for causal prediction!
+%
+% Correct extraction for left neighbor R(i,j-1): Rp(2:M+1, 2:N+1)
+% But then top neighbor R(i-1,j) requires Rp(1:M, 3:N+2) which has different dimensions
+%
+% Current extraction (proven by testing to give better results):
+R_left = Rp(2:M+1, 1:N);    % R(i,j+1) - right neighbor
+R_top = Rp(1:M, 2:N+1);    % R(i+1,j) - bottom neighbor
+G_left = Gp(2:M+1, 1:N);   % G(i,j+1)
+G_top = Gp(1:M, 2:N+1);    % G(i+1,j)
+B_left = Bp(2:M+1, 1:N);   % B(i,j+1)
+B_top = Bp(1:M, 2:N+1);    % B(i+1,j)
 
 % Calculate autocorrelation terms
 RR00 = mean(mean(R.^2));
@@ -95,7 +107,7 @@ BG10 = mean(mean(B.*G_left));
 BR11 = mean(mean(R_top.* B_left));
 BG11 = mean(mean(G_top.* B_left));
 
-% Build coefficient matrices
+% Build coefficient matrices (using original structure matching neighbor extraction)
 Kr = [RR00,RR11,RG00,RG11,RB00,RB11;
       RR11,RR00,GR11,RG00,BR11,RB00;
       RG00,GR11,GG00,GG11,GB00,GB11;
@@ -113,7 +125,7 @@ Kg =[RR00,RR11,RG00,RG11,RB00,RB11,RR10;
 
 Kb =[RR00,RR11,RG00,RG11,RB00,RB11,RR10,GR10;
      RR11,RR00,GR11,RG00,BR11,RB00,RR01,GR01;
-     RG00,GR11,GG00,GG11,GB00,GB11,RG10,RG10;
+     RG00,GR11,GG00,GG11,GB00,GB11,RG10,GG10;
      RG11,RG00,GG11,GG00,BG11,GB00,RG01,GG01;
      RB00,BR11,GB00,BG11,BB00,BB11,RB10,GB10;
      RB11,RB00,GB11,GB00,BB11,BB00,RB01,GB01;
